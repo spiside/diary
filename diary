@@ -1,0 +1,99 @@
+#!/bin/bash
+cmd=${1:-help}
+script=$(basename $0)
+directory="entries"
+encrypted_dir="$directory.secure"
+
+if [[ "$cmd" == "help" ]]
+then
+    cat <<EOF
+$script - A helpful CLI for generating diary files
+    new <optional: -m --message>
+        Creates a new diary file with appropriate folder structure.
+
+    decrypt
+        Decrypts the files if the given passphrase is correct.
+
+    encrypt
+        Encrypts the files using AES-256 using a given passphrase.
+
+EOF
+    exit
+fi
+
+generate_template() {
+echo "# $(echo $@)\n## $(date "+%Y-%m-%d")\n"
+}
+
+case "$cmd" in
+    new)
+        # Early exit if not decrypted
+        if [ -f $encrypted_dir ]; then
+            echo "Run \`./diary decrypt\` first"
+            echo "exiting..."
+            exit 1
+        fi
+
+        shift
+        message=""
+        if [ "$1" == "-m" ] || [ "$1" == "--message" ]; then
+            message=$2
+        fi
+
+        if [ -z "$message" ]; then
+            read -r -p "Enter a diary title: " message
+        fi
+        template="$(generate_template $message)"
+        message="$(echo ${message//[- ]/_} |  tr "[:upper:]" "[:lower:]")"
+        filename="$(date "+%Y%m%d")_$message"
+
+        path="$directory/$(date "+%Y-%m")"
+        mkdir -p $path
+        echo -e $template > "$path/$filename.md"
+        ${EDITOR:-vim} "$path/$filename.md"
+    ;;
+
+    encrypt)
+        # Early exit if not decrypted
+        if [ ! -d $directory ]; then
+            echo "Create a directory first"
+            echo "exiting..."
+            exit 1
+        fi
+
+        if [ -f $encrypted_dir ]; then
+            echo "There already is an encrypted dir."
+            read -r -p  "Do you want to overwrite? [y/n]: " answer
+            answer=$(echo $answer | tr "[:upper:]" "[:lower:]")
+            [ $answer != "y" ] && echo "exiting..." && exit
+            echo -e "Overwriting encrypted entries.\n"
+        fi
+
+        set -e
+        tar -czf - $directory | openssl enc -e -aes256 -out $encrypted_dir
+        set +e
+        rm -rf $directory
+        ;;
+
+    decrypt)
+        # Early exit if not decrypted
+        if [ ! -f $encrypted_dir ]; then
+            echo "Run \`./diary encrypt\` first"
+            echo "exiting..."
+            exit 0
+        fi
+
+        mkdir -p $directory
+        openssl enc -d -aes256 -in $encrypted_dir | tar -xz -C $directory --strip-components 1 &> /dev/null
+        if [ $? != 0 ]; then
+            rm -rf $directory
+            exit 1
+        fi
+        rm $encrypted_dir
+        echo "Find your entries in \`entries/\`."
+        ;;
+
+    *)
+        echo -e "\n$cmd not found. Enter './$script help' for a list of commands"
+    ;;
+esac
